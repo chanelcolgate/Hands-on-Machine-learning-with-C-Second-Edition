@@ -3,6 +3,7 @@
 #include "core/base_component.hpp"
 #include "core/frame_data.hpp"
 #include "core/safe_queue.hpp"
+#include "drivers/ffmpeg_rtsp_reader.hpp"
 
 #include <opencv2/opencv.hpp>
 
@@ -60,15 +61,15 @@ public:
      * Get connection state
      */
     bool is_connected() const {
-        return cap_.isOpened() && !connection_failed_.load();
+        return reader_.is_open() && !connection_failed_.load();
     }
 
     /**
      * Get current FPS
      */
     double get_current_fps() const {
-        if (cap_.isOpened()) {
-            return cap_.get(cv::CAP_PROP_FPS);
+        if (is_connected()) {
+            return reader_.get_fps();
         }
         return 0.0;
     }
@@ -91,7 +92,7 @@ public:
         std::chrono::milliseconds total_downtime_ms{0};
     };
 
-    ConnectionState get_stats() const {
+    ConnectionStats get_stats() const {
         return stats_;
     }
 
@@ -130,7 +131,7 @@ protected:
 
                 if (reconnect_with_backoff()) {
                     reconnect_count++;
-                    state_.successful_reconnects++;
+                    stats_.successful_reconnects++;
                     std::cout << "[" << get_name() << "] Reconnected successfully" << std::endl;
                 } else {
                     stats_.failed_reconnects++;
@@ -142,14 +143,14 @@ protected:
 
             // Capture frame
             cv::Mat frame;
-            if (!cap_.read(frame)) {
+            if (!reader_.read(frame)) {
                 connection_failed_.store(true);
-                frames_dropped++;
+                ++frames_dropped;
                 continue;
             }
 
             if (frame.empty()) {
-                frames_dropped++;
+                ++frames_dropped;
                 continue;
             }
 
@@ -203,27 +204,25 @@ private:
      */
     bool open_connection() {
         try {
-            cap_.open(config_.rtsp_url, cv::CAP__FFMPEG);
-
-            if (!cap_.isOpened()) {
-                std::cerr << "[" << get_name() << "] Failed to open RTSP stream" << std::endl;
+            if (!reader_.open(config_.rtsp_url)) {
+                std::cerr << "[" << get_name()
+                          << "] Failed to open RTSP stream" << std::endl;
                 return false;
             }
 
-            // Set buffer properties
-            cap_.set(cv::CAP_PROP_BUFFERSIZE, 1); // Minimal buffering
-
-            int width = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_WIDTH));
-            int height = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_HEIGHT));
-            double fps = cap_.get(cv::CAP_PROP_FPS);
-
-            std::cout << "[" << get_name() << "] RTSP stream opened: "
-                      << width << "x" << height << " @ " << fps << " FPS" << std::endl;
-
             connection_failed_.store(false);
+
+            std::cout << "[" << get_name()
+                      << "] RTSP stream opened: "
+                      << reader_.width() << "x" 
+                      << reader_.height() << " @ "
+                      << reader_.get_fps() << " FPS" << std::endl;
+
             return true;
         } catch (const std::exception& e) {
-            std::cerr << "[" << get_name() << "] Exception opening RTSP: " << e.what() << std::endl;
+            std::cerr << "[" << get_name()
+                      << "] Exception opening RTSP: "
+                      << e.what() << std::endl;
             return false;
         }
     }
@@ -232,10 +231,9 @@ private:
      * Close RTSP connection
      */
     void close_connection() {
-        if (cap_.isOpened()) {
-            cap_.release();
-            std::cout << "[" << get_name() << "] RTSP connection closed" << std::endl;
-        }
+        reader_.close();
+        std::cout << "[" << get_name()
+                  << "] RTSP connection closed" << std::endl;
     }
 
     /**
@@ -250,7 +248,7 @@ private:
             stats_.total_reconnect_attempts++;
 
             std::cout << "[" << get_name() << "] Reconnect attempt " << attempt
-                      << "/" << config_.max_reconnect_attempt
+                      << "/" << config_.max_reconnect_attempts
                       << " (waiting " << backoff_time << " seconds)" << std::endl;
 
             // Wait with backoff
@@ -265,18 +263,18 @@ private:
 
             // Exponential backoff
             backoff_time *= config_.reconnect_backoff_multiplier;
-            backoff_time = std::main(backoff_time, 60.0f); // Cap at 60 seconds
+            backoff_time = std::min(backoff_time, 60.0f); // Cap at 60 seconds
         }
 
         return false;
     }
 
-    cv::VideoCapture cap_;
+    FFmpegRtspReader reader_;
     std::shared_ptr<SafeQueue<FrameData>> output_queue_;
     Config config_;
 
     std::atomic<bool> connection_failed_{false};
     uint64_t current_frame_id_{0};
     ConnectionStats stats_;
-}
+};
 } // namespace rtsp_ai
