@@ -33,6 +33,9 @@ public:
         av_dict_set(&options, "stimeout", "5000000", 0);
         av_dict_set(&options, "rw_timeout", "5000000", 0);
         av_dict_set(&options, "buffer_size", "10240000", 0);
+        // Give the UDP demuxer enough room to reorder RTP packets.
+        av_dict_set(&options, "reorder_queue_size", "1024", 0);
+        av_dict_set(&options, "max_delay", "500000", 0);
 
         int ret = avformat_open_input(&fmt_ctx_, url.c_str(), nullptr, &options);
         av_dict_free(&options);
@@ -91,6 +94,9 @@ public:
             return false;
         }
 
+        // Explicitly disable hardware configuration accidentally selected by
+        // some Windows FFmpeg builds. The output is converted by swscale.
+        codec_ctx_->thread_count = 1;
         ret = avcodec_open2(codec_ctx_, codec, nullptr);
         if (ret < 0) {
             log_error("avcodec_open2", ret);
@@ -165,6 +171,8 @@ public:
             av_packet_unref(&packet);
             if (ret < 0 && ret != AVERROR(EAGAIN)) {
                 log_error("avcodec_send_packet", ret);
+                // A damaged/lost UDP packet must not make the whole RTSP
+                // connection appear disconnected. Skip it and continue.
                 continue;
             }
 
@@ -173,7 +181,7 @@ public:
                 if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
                 if (ret < 0) {
                     log_error("avcodec_receive_frame", ret);
-                    return false;
+                    break;
                 }
 
                 sws_scale(sws_ctx_, frame_->data, frame_->linesize, 0,
@@ -198,14 +206,8 @@ public:
     int height() const { return codec_ctx_ != nullptr ? codec_ctx_->height : 0; }
 
     void close() {
-        if (sws_ctx_ != nullptr) {
-            sws_freeContext(sws_ctx_);
-            sws_ctx_ = nullptr;
-        }
-        if (buffer_ != nullptr) {
-            av_free(buffer_);
-            buffer_ = nullptr;
-        }
+        if (sws_ctx_ != nullptr) { sws_freeContext(sws_ctx_); sws_ctx_ = nullptr; }
+        if (buffer_ != nullptr) { av_free(buffer_); buffer_ = nullptr; }
         if (frame_ != nullptr) av_frame_free(&frame_);
         if (frame_bgr_ != nullptr) av_frame_free(&frame_bgr_);
         if (codec_ctx_ != nullptr) avcodec_free_context(&codec_ctx_);
@@ -223,11 +225,11 @@ public:
 
 private:
     static const AVCodec* select_decoder(AVCodecID codec_id) {
-        // The runtime log shows libopenh264.dll is installed. Prefer it for
-        // H.264, but fall back to FFmpeg's registered decoder for other builds.
         if (codec_id == AV_CODEC_ID_H264) {
-            if (const AVCodec* openh264 = avcodec_find_decoder_by_name("libopenh264")) {
-                return openh264;
+            // Prefer FFmpeg's normal software decoder. libopenh264 can be
+            // present as a DLL yet reject packets from an RTP stream.
+            if (const AVCodec* h264 = avcodec_find_decoder_by_name("h264")) {
+                return h264;
             }
         }
         return avcodec_find_decoder(codec_id);
@@ -236,8 +238,8 @@ private:
     static void log_error(const char* operation, int error_code) {
         char error_buffer[AV_ERROR_MAX_STRING_SIZE]{};
         av_strerror(error_code, error_buffer, sizeof(error_buffer));
-        std::cerr << "[FFmpegRtspReader] " << operation << " failed: "
-                  << error_buffer << std::endl;
+        std::cerr << "[FFmpegRtspReader] " << operation << " failed ("
+                  << error_code << "): " << error_buffer << std::endl;
     }
 
     AVFormatContext* fmt_ctx_{nullptr};

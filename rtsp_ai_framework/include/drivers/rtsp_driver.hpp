@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <algorithm>
 
 namespace rtsp_ai {
 
@@ -52,15 +53,11 @@ protected:
     void initialize() override {
         std::cout << "[" << get_name() << "] Initializing RTSP connection to: "
                   << config_.rtsp_url << std::endl;
-
-        // Keep OpenCV/FFmpeg on UDP as well. The VLC RTSP server used here
-        // rejects TCP SETUP requests with 461 Unsupported transport.
 #if defined(_WIN32)
         _putenv("OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;udp");
 #else
         setenv("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;udp", 1);
 #endif
-
         if (!open_connection()) throw std::runtime_error("Failed to open RTSP connection");
         stats_.last_connected_time = std::chrono::steady_clock::now();
     }
@@ -71,26 +68,32 @@ protected:
         set_running(true);
         uint64_t frames_captured = 0;
         uint64_t frames_dropped = 0;
-        uint32_t reconnect_count = 0;
         auto last_frame_time = std::chrono::steady_clock::now();
 
         std::cout << "[" << get_name() << "] Starting frame capture loop" << std::endl;
         while (should_run()) {
             if (!is_connected()) {
                 std::cerr << "[" << get_name() << "] Connection lost, attempting reconnect..." << std::endl;
-                if (reconnect_with_backoff()) {
-                    ++reconnect_count;
-                    ++stats_.successful_reconnects;
-                } else {
+                if (!reconnect_with_backoff()) {
                     ++stats_.failed_reconnects;
-                    std::this_thread::sleep_for(std::chrono::seconds(5));
+                    std::this_thread::sleep_for(std::chrono::seconds(2));
                     continue;
                 }
+                ++stats_.successful_reconnects;
             }
 
             cv::Mat frame;
-            if (!reader_.read(frame) || frame.empty()) {
-                connection_failed_.store(true);
+            if (!reader_.read(frame)) {
+                // read() can skip a bad UDP packet internally. Reconnect only
+                // after a real end-of-stream/read failure, not on one decode error.
+                ++frames_dropped;
+                if (frames_dropped <= 5 || frames_dropped % 30 == 0) {
+                    std::cerr << "[" << get_name() << "] No decoded frame; dropped="
+                              << frames_dropped << std::endl;
+                }
+                continue;
+            }
+            if (frame.empty()) {
                 ++frames_dropped;
                 continue;
             }
@@ -119,10 +122,6 @@ protected:
             }
             last_frame_time = std::chrono::steady_clock::now();
         }
-
-        std::cout << "[" << get_name() << "] Capture loop ended; total frames captured: "
-                  << frames_captured << std::endl;
-        (void)reconnect_count;
     }
 
 private:
@@ -149,17 +148,10 @@ private:
     }
 
     bool reconnect_with_backoff() {
-        uint32_t attempt = 0;
-        float backoff_time = 1.0f;
-        while (attempt < static_cast<uint32_t>(config_.max_reconnect_attempts) && should_run()) {
-            ++attempt;
-            ++stats_.total_reconnect_attempts;
-            std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(backoff_time * 1000)));
-            close_connection();
-            if (open_connection()) return true;
-            backoff_time = std::min(backoff_time * config_.reconnect_backoff_multiplier, 60.0f);
-        }
-        return false;
+        ++stats_.total_reconnect_attempts;
+        close_connection();
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        return open_connection();
     }
 
     FFmpegRtspReader reader_;
