@@ -21,6 +21,12 @@ void signal_handler(int signal_num) {
     }
 }
 
+bool parse_bool(const std::string& value) {
+    if (value == "1" || value == "true" || value == "on" || value == "yes") return true;
+    if (value == "0" || value == "false" || value == "off" || value == "no") return false;
+    throw std::invalid_argument("monitor must be true or false");
+}
+
 /**
  * Main application entry point
  */
@@ -34,9 +40,19 @@ int main(int argc, char** argv) {
 
     // Parse command line arguments
     std::string rtsp_url = "rtsp://admin:123456@192.168.1.60:554/0";
+    bool monitor_enabled = false;
 
-    if (argc > 1) {
-        rtsp_url = argv[1];
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg.rfind("--monitor=", 0) == 0) {
+            monitor_enabled = parse_bool(arg.substr(10));
+        } else if (arg == "--monitor") {
+            monitor_enabled = true;
+        } else if (arg == "--no-monitor") {
+            monitor_enabled = false;
+        } else if (arg.rfind("--", 0) != 0) {
+            rtsp_url = arg;
+        }
     }
 
     std::cout << "[Main] RTSP URL: " << rtsp_url << std::endl;
@@ -54,11 +70,13 @@ int main(int argc, char** argv) {
         // Configure Preprocessor
         pipeline_config.preprocessor_config.target_width = 640;
         pipeline_config.preprocessor_config.target_height = 640;
-        pipeline_config.preprocessor_config.normalize = true;
-        pipeline_config.preprocessor_config.convert_bgr_to_rgb = true;
+        pipeline_config.preprocessor_config.normalize = false;
+        pipeline_config.preprocessor_config.convert_bgr_to_rgb = false;
 
         // Configure Queues
         pipeline_config.queue_max_size = 30;
+
+        pipeline_config.monitor_enabled = monitor_enabled;
 
         // Create and start pipeline
         std::cout << "\n[Main] Initializing pipeline..." << std::endl;

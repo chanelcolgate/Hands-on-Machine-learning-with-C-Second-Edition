@@ -32,31 +32,42 @@ public:
         close();
         avformat_network_init();
 
-        AVDictionary* options = nullptr;
+        const char* transports[] = {"tcp","udp"};
 
-        // Dùng TCP để ổn định hơn khi đọc RTSP.
-        av_dict_set(&options, "rtsp_transport", "tcp", 0);
+        for (const char* transport : transports) {
+            AVDictionary* options = nullptr;
 
-        // 5 giây, đơn vị micro giây.
-        // stimeout được hỗ trợ bởi nhiều bản FFmpeg cũ.
-        av_dict_set(&options, "stimeout", "5000000", 0);
+            av_dict_set(&options, "rtsp_transport", transport, 0);
+            av_dict_set(&options, "stimeout", "5000000", 0); // 5 giây, đơn vị ms.
+            av_dict_set(&options, "rw_timeout", "5000000", 0);
+            av_dict_set(&options, "buffer_size", "10240000", 0);
+            av_dict_set(&options, "fifo_size", "500000", 0);
+            av_dict_set(&options, "user_agent", "Lavf/58.29.100", 0);
 
-        int ret = avformat_open_input(
-            &fmt_ctx_,
-            url.c_str(),
-            nullptr,
-            &options
-        );
+            int ret = avformat_open_input(
+                &fmt_ctx_,
+                url.c_str(),
+                nullptr,
+                &options
+            );
+            av_dict_free(&options);
 
-        av_dict_free(&options);
+            if (ret >= 0) {
+                std::cout << "[FFmpegRtspReader] Connected using transport: "
+                          << transport << std::endl;
+                break;
+            }
 
-        if (ret < 0) {
-            log_error("avformat_open_input", ret);
             close();
+        }
+
+        if (fmt_ctx_ == nullptr) {
+            std::cerr << "[FFmpegRtspReader] Failed to open stream with both TCP and UDP"
+                      << std::endl;
             return false;
         }
 
-        ret = avformat_find_stream_info(fmt_ctx_, nullptr);
+        int ret = avformat_find_stream_info(fmt_ctx_, nullptr);
         if (ret < 0) {
             log_error("avformat_find_stream_info", ret);
             close();

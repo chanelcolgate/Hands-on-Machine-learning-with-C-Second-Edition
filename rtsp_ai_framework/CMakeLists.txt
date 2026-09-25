@@ -95,12 +95,14 @@ add_executable(test_safe_queue tests/test_safe_queue.cpp)
 add_executable(test_frame_data tests/test_frame_data.cpp)
 add_executable(test_preprocessor tests/test_preprocessor.cpp)
 add_executable(test_ffmpeg_rtsp_reader tests/test_ffmpeg_rtsp_reader.cpp)
+add_executable(test_display_monitor tests/test_display_monitor.cpp)
 
 if(CYGWIN OR MINGW)
     target_compile_options(test_safe_queue PRIVATE -fext-numeric-literals)
     target_compile_options(test_frame_data PRIVATE -fext-numeric-literals)
     target_compile_options(test_preprocessor PRIVATE -fext-numeric-literals)
     target_compile_options(test_ffmpeg_rtsp_reader PRIVATE -fext-numeric-literals)
+    target_compile_options(test_display_monitor PRIVATE -fext-numeric-literals)
 endif()
 
 target_link_libraries(test_safe_queue
@@ -128,6 +130,13 @@ target_link_libraries(test_ffmpeg_rtsp_reader
         PkgConfig::OPENCV
         Threads::Threads
 )
+target_link_libraries(test_display_monitor
+    PRIVATE
+        gtest_main
+        PkgConfig::FFMPEG
+        PkgConfig::OPENCV
+        Threads::Threads
+)
 
 # Enable testing
 enable_testing()
@@ -135,6 +144,7 @@ add_test(NAME TestSafeQueue COMMAND test_safe_queue)
 add_test(NAME TestFrameData COMMAND test_frame_data)
 add_test(NAME TestPreprocessor COMMAND test_preprocessor)
 add_test(NAME TestFFmpegRtspReader COMMAND test_ffmpeg_rtsp_reader)
+add_test(NAME TestDisplayMonitor COMMAND test_display_monitor)
 
 # Print build information
 message(STATUS "RTSP AI Framework Build Configuration:")

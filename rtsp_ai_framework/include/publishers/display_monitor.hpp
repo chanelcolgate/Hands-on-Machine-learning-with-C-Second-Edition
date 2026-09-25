@@ -10,6 +10,7 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <iostream>
 
 namespace rtsp_ai {
 
@@ -63,13 +64,36 @@ public:
 
     ~DisplayMonitor() override {
         stop();
-        if (!cv::getWindowPropertiy(config_.window_title, cv::WND_PROP_VISIBLE) < 0) {
-            cv::destroyWindow(config_.window_title);
+        // Bọc try-catch an toàn tránh lỗi assertion crash của OpenCV GTK backend trên Cygwin
+        try {
+            if (cv::getWindowProperty(config_.window_title, cv::WND_PROP_VISIBLE) >= 0) {
+                cv::destroyWindow(config_.window_title);
+            }
+        } catch (const cv::Exception& e) {
+            // Ignored on teardown
         }
     }
 
     std::string get_name() const override {
         return "DisplayMonitor";
+    }
+
+    /**
+     * Override hàm stop() để đánh thức thread đang bị nghẽn trong Queue
+     */
+    void stop() override {
+        if (!should_run()) return;
+
+        // Bật cờ dừng trong BaseComponent
+        set_running(false);
+
+        // Đánh thức thread đang bị nghẽn (blocked) trong input_queue_->pop()
+        if (input_queue_) {
+            input_queue_->push(FrameData{});
+        }
+
+        // Gọi stop() của lớp cơ sở để join worker thread
+        BaseComponent::stop();
     }
 
     /**
@@ -100,7 +124,7 @@ protected:
 
         // Create window
         cv::namedWindow(config_.window_title, cv::WINDOW_NORMAL);
-        cv::resizedWindow(config_.window_title, config_.display_width, config_.display_height);
+        cv::resizeWindow(config_.window_title, config_.display_width, config_.display_height);
 
         std::cout << "[" << get_name() << "] Display initialized at "
                   << config_.display_width << "x" << config_.display_height << std::endl;
@@ -111,7 +135,11 @@ protected:
             stop_recording();
         }
 
-        cv::destroyWindow(config_.window_title);
+        try {
+            cv::destroyWindow(config_.window_title);
+        } catch (const cv::Exception& e) {
+            // Ignored
+        }
         std::cout << "[" << get_name() << "] Display window closed" << std::endl;
     }
 
@@ -123,14 +151,16 @@ protected:
         while (should_run()) {
             if (is_paused_) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                handle_keyboard_events();
                 continue;
             }
 
             // Try to get frame from queue
             FrameData frame;
 
-            if (!input_queue_->pop(frame, 500)) {
-                // No frame available, continue waiting
+            if (!input_queue_->pop(frame, 200)) {
+                // No frame available, allow handling events and continue
+                handle_keyboard_events();
                 continue;
             }
 
@@ -148,26 +178,19 @@ protected:
                   << frames_displayed_ << std::endl;
     }
 
-    // Drawing methods
-    void draw_text_overlay(cv::Mat& frame, const FrameData& frame_data);
-    void draw_fps_counter(cv::Mat& frame, float fps);
-
-    // Screenshot & recording
-    void save_screenshot(const cv::Mat& frame);
-    bool start_recording(const std::string& filename, int fourcc, double fps);
-    bool stop_recording();
-
 private:
     /**
      * Display frame with overlay
      */
     void display_frame(const FrameData& frame_data) {
+        if (frame_data.raw_frame.empty()) return;
+
         // Prepare frame for display
         cv::Mat display_frame = frame_data.raw_frame.clone();
 
         // Resize if necessary
         if (display_frame.cols != config_.display_width ||
-            display_frames.rows != config_.display_height) {
+            display_frame.rows != config_.display_height) {
             cv::resize(display_frame, display_frame,
                     cv::Size(config_.display_width, config_.display_height));
         }
@@ -176,8 +199,10 @@ private:
         draw_text_overlay(display_frame, frame_data);
 
         // Display
-        cv::inshow(config_.window_title, display_frame);
+        cv::imshow(config_.window_title, display_frame);
 
+        // Save current rendered frame for screenshot
+        last_frame_ = display_frame.clone();
         frames_displayed_++;
         last_displayed_frame_ = frame_data.frame_id;
 
@@ -240,13 +265,13 @@ private:
 
         // Recording indicator
         if (is_recording_) {
-            put_text_with_bg(frame,"● REC", cv::Point(10, frame.rows - 30),
+            put_text_with_bg(frame, "● REC", cv::Point(10, frame.rows - 30),
                              cv::Scalar(0, 0, 255)); // Red
         }
 
         // Pause indicator
         if (is_paused_) {
-            put_text_with_bg(frame, "⏸ PAUSED", cv::Point(10, frame.rows - 30));
+            put_text_with_bg(frame, "PAUSED", cv::Point(10, frame.rows - 30));
         }
 
         // Help text at bottom
@@ -255,10 +280,9 @@ private:
                          cv::Point(10, frame.rows - 10),
                          cv::Scalar(200, 200, 200),
                          0.4);
-
     }
 
-    /*
+    /**
      * Put text with semi-transparent background
      */
     void put_text_with_bg(cv::Mat& frame,
@@ -319,7 +343,7 @@ private:
      * Save screenshot to file
      */
     void save_screenshot() {
-        if (last_displayed_frame_ == 0) {
+        if (last_frame_.empty()) {
             std::cerr << "[" << get_name() << "] No frame to screenshot" << std::endl;
             return;
         }
@@ -334,11 +358,15 @@ private:
                      << std::put_time(tm, "%Y%m%d_%H%M%S")
                      << "_frame_" << last_displayed_frame_ << ".png";
 
-            // Note: Would need to save the actual frame
-            // This is a stub - real implementation would save last displayed frame
-            std::cout << "[" << get_name() << "] Screenshot saved: "
-                      << filename.str() << std::endl;
-            screenshots_taken_++;
+            // Save the actual frame image
+            if (cv::imwrite(filename.str(), last_frame_)) {
+                std::cout << "[" << get_name() << "] Screenshot saved: "
+                          << filename.str() << std::endl;
+                screenshots_taken_++;
+            } else {
+                std::cerr << "[" << get_name() << "] Failed to write screenshot to: "
+                          << filename.str() << std::endl;
+            }
         } catch (const std::exception& e) {
             std::cerr << "[" << get_name() << "] Error saving screenshot: "
                       << e.what() << std::endl;
@@ -410,7 +438,6 @@ private:
      */
     void create_output_directories() {
         try {
-            // For Linux/Mac
             std::string mkdir_cmd = "mkdir -p " + config_.screenshot_dir +
                                     " " + config_.video_output_dir;
             int ret = system(mkdir_cmd.c_str());
@@ -432,6 +459,7 @@ private:
     bool is_paused_;
     bool is_recording_;
     cv::VideoWriter video_writer_;
+    cv::Mat last_frame_;
 
     // Metrics
     uint64_t frames_displayed_{0};
@@ -443,4 +471,5 @@ private:
     double display_fps_;
     std::chrono::steady_clock::time_point last_fps_update_;
 };
+
 } // namespace rtsp_ai

@@ -101,6 +101,12 @@ protected:
         std::cout << "[" << get_name() << "] Initializing RTSP connection to: "
                   << config_.rtsp_url << std::endl;
 
+#if defined(_WIN32)
+        _putenv("OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;tcp");
+#else
+        setenv("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp", 1);
+#endif
+
         if (!open_connection()) {
             throw std::runtime_error("Failed to open RTSP connection");
         }

@@ -3,6 +3,8 @@
 #include "drivers/rtsp_driver.hpp"
 #include "processing/preprocessor.hpp"
 #include "core/safe_queue.hpp"
+#include "publishers/display_monitor.hpp"
+
 #include <memory>
 #include <string>
 #include <iostream>
@@ -28,6 +30,9 @@ public:
 
         // Queue Configuration
         size_t queue_max_size{30};
+
+        bool monitor_enabled{false};
+        DisplayMonitor::Config monitor_config;
     };
 
     /**
@@ -53,6 +58,13 @@ public:
         );
 
         std::cout << "[PipelineEnv] Pipeline components created successfully" << std::endl;
+
+        if (config_.monitor_enabled) {
+            monitor_ = std::make_unique<DisplayMonitor>(
+                processed_frame_queue_,
+                config_.monitor_config
+            );
+        }
     }
 
     ~PipelineEnv() {
@@ -85,6 +97,10 @@ public:
 
             // Start preprocessor
             preprocessor_->start();
+
+            if (monitor_) {
+                monitor_->start();
+            }
 
             started_ = true;
             std::cout << "[PipelineEnv] Pipeline started successfully" << std::endl;
@@ -246,5 +262,7 @@ private:
     // Components
     std::unique_ptr<RtspDriver> driver_;
     std::unique_ptr<ImagePreprocessor> preprocessor_;
+
+    std::unique_ptr<DisplayMonitor> monitor_;
 };
 } // namespace rtsp_ai
