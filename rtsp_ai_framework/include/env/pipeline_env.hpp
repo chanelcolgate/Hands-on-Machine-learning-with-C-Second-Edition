@@ -1,9 +1,10 @@
 #pragma once
 
-#include "drivers/rtsp_driver.hpp"
-#include "processing/preprocessor.hpp"
 #include "core/safe_queue.hpp"
+#include "drivers/rtsp_driver.hpp"
 #include "publishers/display_monitor.hpp"
+#include "processing/preprocessor.hpp"
+#include "processing/image_processor.hpp"
 
 #include <memory>
 #include <string>
@@ -19,9 +20,11 @@ public:
     struct Config {
         RtspDriver::Config rtsp_config;
         ImagePreprocessor::Config preprocessor_config;
+        DisplayMonitor::Config monitor_config;
+        ImageProcessor::Config image_processor_config;
+
         size_t queue_max_size{30};
         bool monitor_enabled{false};
-        DisplayMonitor::Config monitor_config;
     };
 
     explicit PipelineEnv(const Config& config) : config_(config), started_(false) {
@@ -35,6 +38,7 @@ public:
             monitor_ = std::make_unique<DisplayMonitor>(
                 processed_frame_queue_, config_.monitor_config);
         }
+        image_processor_ = std::make_unique<ImageProcessor>(config_.image_processor_config);
     }
 
     ~PipelineEnv() { stop_pipeline(); }
@@ -63,6 +67,11 @@ public:
                 }
             }
 
+            image_processor_->start();
+            if (!image_processor_->is_running()) {
+                throw std::runtime_error("Image Processor failed to start");
+            }
+
             started_ = true;
             std::cout << "[PipelineEnv] Pipeline started successfully" << std::endl;
         } catch (const std::exception& e) {
@@ -82,7 +91,7 @@ public:
 
     bool is_running() const {
         return started_ && driver_->is_running() && preprocessor_->is_running() &&
-               (!monitor_ || monitor_->is_running());
+               (!monitor_ || monitor_->is_running()) && image_processor_->is_running();
     }
 
     std::optional<FrameData> get_processed_frame(uint32_t timeout_ms = 100) {
@@ -112,12 +121,14 @@ public:
     std::shared_ptr<SafeQueue<FrameData>> get_processed_queue() { return processed_frame_queue_; }
     RtspDriver* get_driver() { return driver_.get(); }
     ImagePreprocessor* get_preprocessor() { return preprocessor_.get(); }
+    ImageProcessor* get_image_processor() { return image_processor_.get(); }
 
 private:
     void stop_components() {
         if (monitor_) monitor_->stop();
         if (preprocessor_) preprocessor_->stop();
         if (driver_) driver_->stop();
+        if (image_processor_) image_processor_->stop();
     }
 
     Config config_;
@@ -128,5 +139,6 @@ private:
     std::unique_ptr<RtspDriver> driver_;
     std::unique_ptr<ImagePreprocessor> preprocessor_;
     std::unique_ptr<DisplayMonitor> monitor_;
+    std::unique_ptr<ImageProcessor> image_processor_;
 };
 } // namespace rtsp_ai

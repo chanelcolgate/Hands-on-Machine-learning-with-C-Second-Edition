@@ -294,8 +294,3 @@ TEST_F(DisplayMonitorTest, MonitorCanBePaused) {
     EXPECT_GT(monitor_->get_frames_displayed(), 0);
 }
 }
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

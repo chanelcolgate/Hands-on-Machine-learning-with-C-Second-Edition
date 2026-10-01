@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(rtsp_ai_framework LANGUAGES CXX)
+
+set(PROJECT_NAME rtsp_ai_app)
+project(${PROJECT_NAME} LANGUAGES CXX)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -7,6 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
 set(CMAKE_VERBOSE_MAKEFILE ON)
+set(Boost_NO_SYSTEM_PATHS ON)
 
 # Find PkgConfig & Threads
 find_package(PkgConfig REQUIRED)
@@ -22,6 +25,18 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
     libavcodec
     libswscale
     libavutil
+)
+
+add_library(Eigen INTERFACE)
+target_include_directories(Eigen INTERFACE
+    $<BUILD_INTERFACE:/home/MIND_SUPPORT/Documents/libs/eigen>
+    $<INSTALL_INTERFACE:include>
+)
+
+add_library(Boost_lib INTERFACE)
+target_include_directories(Boost_lib INTERFACE
+    $<BUILD_INTERFACE:/home/MIND_SUPPORT/Documents/libs/boost>
+    $<INSTALL_INTERFACE:include>
 )
 
 # Include directories toàn cục
@@ -44,14 +59,15 @@ add_compile_definitions(
 set(CORE_SOURCES src/main.cpp)
 
 # Create the main executable
-add_executable(rtsp_ai_app ${CORE_SOURCES})
+add_executable(${PROJECT_NAME} ${CORE_SOURCES})
 
 # Link OpenCV + FFmpeg + Threads cho app chính
-target_link_libraries(rtsp_ai_app 
+target_link_libraries(${PROJECT_NAME}
     PRIVATE 
         PkgConfig::OPENCV
         PkgConfig::FFMPEG
         Threads::Threads
+        Eigen
 )
 
 # Compiler options cho app chính
@@ -59,6 +75,10 @@ if(MSVC)
     target_compile_options(rtsp_ai_app PRIVATE /W4)
 else()
     target_compile_options(rtsp_ai_app PRIVATE -Wall -Wextra -pedantic)
+endif()
+
+if (NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
 endif()
 
 # Enable address sanitizer cho Debug
@@ -96,6 +116,9 @@ add_executable(test_frame_data tests/test_frame_data.cpp)
 add_executable(test_preprocessor tests/test_preprocessor.cpp)
 add_executable(test_ffmpeg_rtsp_reader tests/test_ffmpeg_rtsp_reader.cpp)
 add_executable(test_display_monitor tests/test_display_monitor.cpp)
+add_executable(test_function_sigmoid tests/test_function_sigmoid.cpp)
+add_executable(test_find_middle tests/test_find_middle.cpp)
+add_executable(test_glorot tests/test_glorot.cpp)
 
 if(CYGWIN OR MINGW)
     target_compile_options(test_safe_queue PRIVATE -fext-numeric-literals)
@@ -103,6 +126,9 @@ if(CYGWIN OR MINGW)
     target_compile_options(test_preprocessor PRIVATE -fext-numeric-literals)
     target_compile_options(test_ffmpeg_rtsp_reader PRIVATE -fext-numeric-literals)
     target_compile_options(test_display_monitor PRIVATE -fext-numeric-literals)
+    target_compile_options(test_function_sigmoid PRIVATE -fext-numeric-literals)
+    target_compile_options(test_find_middle PRIVATE -fext-numeric-literals)
+    target_compile_options(test_glorot PRIVATE -fext-numeric-literals)
 endif()
 
 target_link_libraries(test_safe_queue
@@ -137,6 +163,30 @@ target_link_libraries(test_display_monitor
         PkgConfig::OPENCV
         Threads::Threads
 )
+target_link_libraries(test_function_sigmoid
+    PRIVATE
+        gtest_main
+        PkgConfig::FFMPEG
+        PkgConfig::OPENCV
+        Threads::Threads
+        Eigen)
+
+target_link_libraries(test_find_middle
+    PRIVATE
+        gtest_main
+        PkgConfig::FFMPEG
+        PkgConfig::OPENCV
+        Threads::Threads
+        Eigen)
+
+target_link_libraries(test_glorot
+    PRIVATE
+        gtest_main
+        PkgConfig::FFMPEG
+        PkgConfig::OPENCV
+        Threads::Threads
+        Eigen
+        Boost_lib)
 
 # Enable testing
 enable_testing()
@@ -145,6 +195,9 @@ add_test(NAME TestFrameData COMMAND test_frame_data)
 add_test(NAME TestPreprocessor COMMAND test_preprocessor)
 add_test(NAME TestFFmpegRtspReader COMMAND test_ffmpeg_rtsp_reader)
 add_test(NAME TestDisplayMonitor COMMAND test_display_monitor)
+add_test(NAME TestFunctionSigmoid COMMAND test_function_sigmoid)
+add_test(NAME TestFindMiddle COMMAND test_find_middle)
+add_test(NAME TestGlorot COMMAND test_glorot)
 
 # Print build information
 message(STATUS "RTSP AI Framework Build Configuration:")

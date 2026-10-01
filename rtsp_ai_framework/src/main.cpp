@@ -46,10 +46,13 @@ int main(int argc, char** argv) {
         pipeline_config.rtsp_config.target_fps = 30;
         pipeline_config.preprocessor_config.target_width = 640;
         pipeline_config.preprocessor_config.target_height = 640;
-        pipeline_config.preprocessor_config.normalize = false;
-        pipeline_config.preprocessor_config.convert_bgr_to_rgb = false;
+        pipeline_config.preprocessor_config.normalize = true;
+        pipeline_config.preprocessor_config.convert_bgr_to_rgb = true;
         pipeline_config.queue_max_size = 30;
         pipeline_config.monitor_enabled = monitor_enabled;
+        pipeline_config.image_processor_config.enable_functional = false;
+        pipeline_config.image_processor_config.enable_lambda = false;
+        pipeline_config.image_processor_config.enable_matrix = false;
 
         rtsp_ai::PipelineEnv pipeline(pipeline_config);
         std::cout << "\n[Main] Starting pipeline..." << std::endl;
