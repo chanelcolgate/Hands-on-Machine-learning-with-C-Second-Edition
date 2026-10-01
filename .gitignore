@@ -2,6 +2,7 @@ screenshots/
 build_tree/
 # Prerequisites
 *.d
+*.backup1
 
 # Compiled Object files
 *.slo
