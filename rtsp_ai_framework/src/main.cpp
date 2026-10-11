@@ -40,24 +40,47 @@ int main(int argc, char** argv) {
     std::cout << "[Main] RTSP URL: " << rtsp_url << std::endl;
     try {
         rtsp_ai::PipelineEnv::Config pipeline_config;
+
         pipeline_config.rtsp_config.rtsp_url = rtsp_url;
         pipeline_config.rtsp_config.connection_timeout_sec = 10;
         pipeline_config.rtsp_config.max_reconnect_attempts = 5;
         pipeline_config.rtsp_config.target_fps = 30;
+
         pipeline_config.preprocessor_config.target_width = 640;
         pipeline_config.preprocessor_config.target_height = 640;
         pipeline_config.preprocessor_config.normalize = true;
         pipeline_config.preprocessor_config.convert_bgr_to_rgb = true;
+
         pipeline_config.queue_max_size = 30;
         pipeline_config.monitor_enabled = monitor_enabled;
+
         pipeline_config.image_processor_config.enable_functional = false;
         pipeline_config.image_processor_config.enable_lambda = false;
         pipeline_config.image_processor_config.enable_matrix = false;
+        pipeline_config.image_processor_config.enable_opencv = true;
 
+        // Configure Monitor Display
+        pipeline_config.monitor_config.window_title = "RTSP AI Stream";
+        pipeline_config.monitor_config.display_width = 1280;
+        pipeline_config.monitor_config.display_height = 720;
+        pipeline_config.monitor_config.show_fps = true;
+        pipeline_config.monitor_config.show_latency = true;
+        pipeline_config.monitor_config.show_timestamp = true;
+
+        // Create and start pipeline
+        std::cout << "\n[Main] Initializing pipeline..." << std::endl;
         rtsp_ai::PipelineEnv pipeline(pipeline_config);
+
         std::cout << "\n[Main] Starting pipeline..." << std::endl;
         pipeline.start_pipeline();
-        std::cout << "[Main] Pipeline running. Press ESC in the video window or Ctrl+C to terminate." << std::endl;
+
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        // Check if pipeline is running
+        if (!pipeline.is_running()) {
+            throw std::runtime_error("Pipeline failed to start correctly");
+        }
+
+        std::cout << "[Main] Pipeline running. Press Ctrl+C to terminate." << std::endl;
 
         uint64_t frame_count = 0;
         while (keep_running.load()) {

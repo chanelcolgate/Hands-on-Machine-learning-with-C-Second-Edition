@@ -12,9 +12,14 @@
 #include <cstddef>
 
 #include <Eigen/Dense>
+#include <Eigen/Core>
 #include <opencv2/opencv.hpp>
+#include <opencv2/core/eigen.hpp>
 
 #include "core/base_component.hpp"
+#include "core/frame_data.hpp"
+#include "core/safe_queue.hpp"
+#include "core/math_utils.hpp"
 
 namespace rtsp_ai {
 
@@ -27,6 +32,7 @@ enum class EdgeDetectionMethod {
     FUNCTIONAL, // Using functional programming
     LAMBDA,
     MATRIX,
+    OPENCV
 };
 
 /**
@@ -39,19 +45,25 @@ public:
         bool enable_functional{false};
         bool enable_lambda{false};
         bool enable_matrix{false};
+        bool enable_opencv{false};
 
         // Edge detection settings
         EdgeDetectionMethod functional_method{EdgeDetectionMethod::FUNCTIONAL};
         EdgeDetectionMethod lambda_method{EdgeDetectionMethod::LAMBDA};
         EdgeDetectionMethod matrix_method{EdgeDetectionMethod::MATRIX};
+        EdgeDetectionMethod opencv_method{EdgeDetectionMethod::OPENCV};
     };
 
     /**
      * Constructor
      */
     ImageProcessor(
+        std::shared_ptr<SafeQueue<FrameData>> input_queue,
+        std::shared_ptr<SafeQueue<FrameData>> output_queue,
         const Config& config
-    ) : config_(config) {}
+    ) : input_queue_(input_queue),
+        output_queue_(output_queue),
+        config_(config) {}
 
     ~ImageProcessor() override = default;
 
@@ -62,23 +74,39 @@ public:
     /**
      * Process a single frame
      */
-    bool process_frame() {
+    bool process_frame(FrameData& frame) {
+        if (!frame.is_valid()) {
+            std::cerr << "[ImageProcessor] Invalid frame: " << frame.frame_id << std::endl;
+            return false;
+        }
         try {
+            cv::Mat result = frame.raw_frame.clone();
+
             if (config_.enable_functional) {
-                apply_edge_detection(config_.functional_method);
+                apply_edge_detection(result, result, config_.functional_method);
             }
 
             if (config_.enable_lambda) {
-                apply_edge_detection(config_.lambda_method);
+                apply_edge_detection(result, result, config_.lambda_method);
             }
 
             if (config_.enable_matrix) {
-                apply_edge_detection(config_.matrix_method);
+                apply_edge_detection(result, result, config_.matrix_method);
             }
-        return true;
+
+            if (config_.enable_opencv) {
+                cv::Mat temp_output;
+                using_opencv(result, temp_output);
+                result = temp_output;
+            }
+
+            // Store result in processed_blob
+            frame.processed_blob = result;
+
+            return true;
         } catch (const std::exception& e) {
             std::cerr << "[" << get_name() << "] Error processing frame " 
-                      << std::endl;
+                      << frame.frame_id << ": " << e.what() << std::endl;
             return false;
         }    
     }
@@ -220,6 +248,76 @@ public:
         return result;
     }
 
+    static void using_opencv(const cv::Mat& src, cv::Mat& dst) {
+        if (src.empty()) {
+            throw std::invalid_argument("Source image is empty");
+        }
+
+        cv::Mat gray;
+
+        if (src.channels() == 3) {
+            cv::cvtColor(src, gray, cv::COLOR_BGR2GRAY);
+        } else if (src.channels() == 4) {
+            cv::cvtColor(src, gray, cv::COLOR_BGR2GRAY);
+        }else if (src.channels() == 1) {
+            gray = src;
+        } else {
+            throw std::invalid_argument(
+                "Unsupported image channel count"
+            );
+        }
+
+        cv::Mat gray64;
+        gray.convertTo(gray64, CV_64FC1);
+
+        Matrix X;
+        cv::cv2eigen(gray64, X);
+
+        Matrix Gx(3, 3), Gy(3, 3);
+
+        Gx <<
+            1., 0., -1.,
+            2., 0., -2.,
+            1., 0., -1.;
+
+        Gy <<
+            1., 2., 1.,
+            0., 0., 0.,
+            -1., -2., -1.;
+
+        // const int padding = (Gx.rows() - 1) / 2;
+        const int padding = 1;
+
+        auto gx = Conv_2D_v2(X, Gx, padding);
+        auto gy = Conv_2D_v2(X, Gy, padding);
+
+        // Ensure both gradients have identical dimensions.
+        if (gx.rows() != gy.rows() ||
+            gx.cols() != gy.cols()) {
+            throw std::runtime_error(
+                "Sobel gradient dimensions do not match"
+            );
+        }
+
+        Matrix magnitude =
+            (gx.array().square() + gy.array().square())
+                .sqrt().matrix();
+
+        cv::Mat magnitude64;
+        cv::eigen2cv(magnitude, magnitude64);
+
+        cv::Mat output8;
+        cv::normalize(
+            magnitude64,
+            output8,
+            0,
+            255,
+            cv::NORM_MINMAX,
+            CV_8UC1
+        );
+
+        dst = output8;
+    }
 
 protected:
     void initialize() override {
@@ -232,7 +330,30 @@ protected:
 
         std::cout << "[" << get_name() << "] Image Processing started" << std::endl;
 
-        process_frame();
+        uint64_t processed_count = 0;
+
+        while (should_run()) {
+            FrameData frame;
+
+            if (!input_queue_->pop(frame, 1000)) {
+                continue;
+            }
+
+            if (process_frame(frame)) {
+                output_queue_->push(frame);
+                processed_count++;
+
+                // Log progress every 30 frames
+                if (processed_count % 30 == 0) {
+                    std::cout << "[" << get_name() << "] Processed "
+                              << processed_count << " frames" << std::endl;
+                }
+            }
+        }
+
+        std::cout << "[" << get_name() << "] Total processed: "
+                  << processed_count << std::endl;
+
     }
 
 private:
@@ -240,6 +361,8 @@ private:
      * Apply edge detection based on configured method
      */
     void apply_edge_detection(
+        const cv::Mat& src,
+        const cv::Mat& dst,
         EdgeDetectionMethod method
     ) {
         switch(method) {
@@ -261,6 +384,8 @@ private:
     }
 
     // Members
+    std::shared_ptr<SafeQueue<FrameData>> input_queue_;
+    std::shared_ptr<SafeQueue<FrameData>> output_queue_;
     Config config_;
 };
 }

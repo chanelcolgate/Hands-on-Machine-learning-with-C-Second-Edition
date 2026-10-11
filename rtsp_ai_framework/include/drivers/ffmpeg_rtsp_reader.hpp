@@ -28,7 +28,36 @@ public:
         close();
         avformat_network_init();
 
-        AVDictionary* options = nullptr;
+        const char* transports[] = {"udp", "tcp"};
+
+        for (const char* transport : transports) {
+            AVDictionary* options = nullptr;
+
+            av_dict_set(&options, "rtsp_transport", transport, 0);
+            av_dict_set(&options, "stimeout", "5000000", 0);
+            av_dict_set(&options, "rw_timeout", "5000000", 0);
+            av_dict_set(&options, "buffer_size", "10240000", 0);
+            av_dict_set(&options, "fifo_size", "500000", 0);
+            av_dict_set(&options, "user_agent", "Lavf/58.29.100", 0);
+
+            int ret = avformat_open_input(
+                &fmt_ctx_,
+                url.c_str(),
+                nullptr,
+                &options
+            );
+            av_dict_free(&options);
+
+            if (ret >= 0) {
+                std::cout << "[FFmpegRtspReader] Connected using transport: "
+                          << transport << std::endl;
+                break;
+            }
+
+            close();
+        }
+
+        /*AVDictionary* options = nullptr;
         av_dict_set(&options, "rtsp_transport", "udp", 0);
         av_dict_set(&options, "stimeout", "5000000", 0);
         av_dict_set(&options, "rw_timeout", "5000000", 0);
@@ -46,6 +75,19 @@ public:
         }
 
         ret = avformat_find_stream_info(fmt_ctx_, nullptr);
+        if (ret < 0) {
+            log_error("avformat_find_stream_info", ret);
+            close();
+            return false;
+        }*/
+
+        if (fmt_ctx_ == nullptr) {
+            std::cerr << "[FFmpegRtspReader] Failed to open stream with both TCP and UDP"
+                      << std::endl;
+            return false;
+        }
+
+        int ret = avformat_find_stream_info(fmt_ctx_, nullptr);
         if (ret < 0) {
             log_error("avformat_find_stream_info", ret);
             close();

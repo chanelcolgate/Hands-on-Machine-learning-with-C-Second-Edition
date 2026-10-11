@@ -53,11 +53,11 @@ protected:
     void initialize() override {
         std::cout << "[" << get_name() << "] Initializing RTSP connection to: "
                   << config_.rtsp_url << std::endl;
-#if defined(_WIN32)
-        _putenv("OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;udp");
-#else
-        setenv("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;udp", 1);
-#endif
+// #if defined(_WIN32)
+//         _putenv("OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;udp");
+// #else
+//         setenv("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;udp", 1);
+// #endif
         if (!open_connection()) throw std::runtime_error("Failed to open RTSP connection");
         stats_.last_connected_time = std::chrono::steady_clock::now();
     }

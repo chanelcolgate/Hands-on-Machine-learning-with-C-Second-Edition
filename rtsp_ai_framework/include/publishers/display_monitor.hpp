@@ -164,6 +164,10 @@ protected:
                 continue;
             }
 
+            if (frame.frame_id == UINT64_MAX) {
+                break;
+            }
+
             // Display the frame
             display_frame(frame);
 

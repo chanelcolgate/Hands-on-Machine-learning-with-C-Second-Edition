@@ -31,14 +31,16 @@ public:
         std::cout << "[PipelineEnv] Initializing RTSP AI Framework Pipeline" << std::endl;
         raw_frame_queue_ = std::make_shared<SafeQueue<FrameData>>(config_.queue_max_size);
         processed_frame_queue_ = std::make_shared<SafeQueue<FrameData>>(config_.queue_max_size);
+        processed_image_queue_ = std::make_shared<SafeQueue<FrameData>>(config_.queue_max_size);
         driver_ = std::make_unique<RtspDriver>(raw_frame_queue_, config_.rtsp_config);
         preprocessor_ = std::make_unique<ImagePreprocessor>(
-            raw_frame_queue_, processed_frame_queue_, config_.preprocessor_config);
+             raw_frame_queue_, processed_frame_queue_, config_.preprocessor_config);
+        image_processor_ = std::make_unique<ImageProcessor>(
+             processed_frame_queue_, processed_image_queue_, config_.image_processor_config);
         if (config_.monitor_enabled) {
             monitor_ = std::make_unique<DisplayMonitor>(
-                processed_frame_queue_, config_.monitor_config);
+                processed_image_queue_, config_.monitor_config);
         }
-        image_processor_ = std::make_unique<ImageProcessor>(config_.image_processor_config);
     }
 
     ~PipelineEnv() { stop_pipeline(); }
@@ -51,25 +53,28 @@ public:
         try {
             start_time_ = std::chrono::steady_clock::now();
             driver_->start();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             if (!driver_->is_running()) {
                 throw std::runtime_error("RTSP driver failed to start");
             }
 
             preprocessor_->start();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             if (!preprocessor_->is_running()) {
                 throw std::runtime_error("Image preprocessor failed to start");
-            }
-
-            if (monitor_) {
-                monitor_->start();
-                if (!monitor_->is_running()) {
-                    throw std::runtime_error("Display monitor failed to start");
-                }
             }
 
             image_processor_->start();
             if (!image_processor_->is_running()) {
                 throw std::runtime_error("Image Processor failed to start");
+            }
+
+            if (monitor_) {
+                monitor_->start();
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (!monitor_->is_running()) {
+                    throw std::runtime_error("Display monitor failed to start");
+                }
             }
 
             started_ = true;
@@ -125,10 +130,22 @@ public:
 
 private:
     void stop_components() {
-        if (monitor_) monitor_->stop();
-        if (preprocessor_) preprocessor_->stop();
-        if (driver_) driver_->stop();
-        if (image_processor_) image_processor_->stop();
+        if (monitor_) {
+            monitor_->stop();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (image_processor_) {
+            image_processor_->stop();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (preprocessor_) {
+            preprocessor_->stop();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (driver_) {
+            driver_->stop();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
     }
 
     Config config_;
@@ -136,6 +153,7 @@ private:
     std::chrono::steady_clock::time_point start_time_;
     std::shared_ptr<SafeQueue<FrameData>> raw_frame_queue_;
     std::shared_ptr<SafeQueue<FrameData>> processed_frame_queue_;
+    std::shared_ptr<SafeQueue<FrameData>> processed_image_queue_;
     std::unique_ptr<RtspDriver> driver_;
     std::unique_ptr<ImagePreprocessor> preprocessor_;
     std::unique_ptr<DisplayMonitor> monitor_;

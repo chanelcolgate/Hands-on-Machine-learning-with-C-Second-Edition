@@ -7,6 +7,8 @@
 #include <numeric>
 
 #include "processing/image_processor.hpp"
+#include "core/safe_queue.hpp"
+#include "core/frame_data.hpp"
 
 using namespace rtsp_ai;
 
@@ -49,8 +51,10 @@ bool t_test(float population_mean, float sample_mean, float sample_std_dev, int 
 
 TEST(CheckGlorot, StatCases) {
     ImageProcessor::Config config;
+    auto input_queue = std::make_shared<SafeQueue<FrameData>>(10);
+    auto output_queue = std::make_shared<SafeQueue<FrameData>>(10);
 
-    ImageProcessor image_processor(config);
+    ImageProcessor image_processor(input_queue, output_queue, config);
 
     int fan_in = 6;
     int fan_out = 5;
